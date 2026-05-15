@@ -4,16 +4,15 @@ import { internal } from './_generated/api';
 import { packwalkError, getErrorInfo } from './lib/errors';
 import type { Doc, Id } from './_generated/dataModel';
 
-// Debug: List recent Stripe errors (useful for production debugging)
-export const debugStripeErrors = mutation({
+// Internal-only — invoke from the Convex dashboard. Public exposure would leak payment + walker data.
+export const debugStripeErrors = internalMutation({
   args: {},
   handler: async (ctx) => {
     return await ctx.db.query('stripeErrors').order('desc').take(5);
   },
 });
 
-// Debug: List all walkers with their Connect status
-export const debugListWalkers = mutation({
+export const debugListWalkers = internalMutation({
   args: {},
   handler: async (ctx) => {
     const users = await ctx.db.query('users').collect();
@@ -29,8 +28,7 @@ export const debugListWalkers = mutation({
   },
 });
 
-// Debug: List recent walks with full details
-export const debugListWalks = mutation({
+export const debugListWalks = internalMutation({
   args: { limit: v.optional(v.number()) },
   handler: async (ctx, args) => {
     const limit = args.limit ?? 10;
@@ -93,8 +91,7 @@ export const debugListWalks = mutation({
   },
 });
 
-// Debug: List recent walkRequests
-export const debugListRequests = mutation({
+export const debugListRequests = internalMutation({
   args: { limit: v.optional(v.number()) },
   handler: async (ctx, args) => {
     const limit = args.limit ?? 10;
@@ -124,8 +121,7 @@ export const debugListRequests = mutation({
   },
 });
 
-// Debug: List webhook events
-export const debugListWebhooks = mutation({
+export const debugListWebhooks = internalMutation({
   args: { limit: v.optional(v.number()) },
   handler: async (ctx, args) => {
     const limit = args.limit ?? 10;

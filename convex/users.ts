@@ -1,4 +1,4 @@
-import { internalQuery, mutation, query } from './_generated/server';
+import { internalMutation, internalQuery, mutation, query } from './_generated/server';
 import { v } from 'convex/values';
 import { requireIdentity } from './lib/guards';
 
@@ -98,8 +98,9 @@ export const getPublicProfile = query({
   },
 });
 
-// Reset Stripe Connect status for all walkers (for switching test -> live mode)
-export const resetAllWalkersConnectStatus = mutation({
+// Internal-only — invoke from the Convex dashboard when switching test/live keys.
+// Public exposure would let any authenticated user wipe every walker's payout credentials.
+export const resetAllWalkersConnectStatus = internalMutation({
   args: {},
   handler: async (ctx) => {
     const walkers = await ctx.db
