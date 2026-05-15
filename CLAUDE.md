@@ -142,6 +142,26 @@ The Convex project also has a "production" deployment slot, but it is **unused**
 
 To push backend code: `npx convex dev --once` (one-shot deploy to `earnest-minnow-363`) or run `npx convex dev` and leave it watching. Do **not** run `npx convex deploy` or `--prod` — that targets the unused prod deployment.
 
+### Convex environment variables (server-side)
+
+Set via `npx convex env set <KEY> <VALUE>`. Required for the backend to function:
+
+```
+AUTH_APPLE_CLIENT_ID         # Apple Sign-In bundle id (com.packwalk.app)
+AUTH_APPLE_KEY_ID            # Apple p8 key id
+AUTH_APPLE_TEAM_ID           # Apple team id
+AUTH_APPLE_PRIVATE_KEY       # Contents of AuthKey_*.p8 (do not commit the .p8)
+AUTH_GOOGLE_CLIENT_ID        # Google OAuth web client id (audience)
+AUTH_GOOGLE_IOS_CLIENT_ID    # Google OAuth iOS client id (audience)
+STRIPE_SECRET_KEY            # sk_live_... for production, sk_test_... for dev
+STRIPE_WEBHOOK_SECRET        # whsec_... from Stripe webhook config
+LOCATION_TOKEN_SECRET        # 32+ char hex string for walk-scoped GPS tokens (HMAC key)
+RESEND_WEBHOOK_SECRET        # Svix webhook signing key for Resend (email events)
+CERTN_WEBHOOK_SECRET         # HMAC signing key for Certn (background check, future)
+```
+
+To rotate `LOCATION_TOKEN_SECRET`: generate a new value (`openssl rand -hex 32`), set it, then re-issue tokens via `walks.getActiveWalkToken` for any walks that are mid-flight. The old secret remains valid for existing tokens until they expire (12h after walk start).
+
 ### Future Enhancements (Post-MVP)
 - Help & Support screen
 - Stripe Customer Portal for payment method management
