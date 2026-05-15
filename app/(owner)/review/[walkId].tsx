@@ -19,6 +19,7 @@ import Animated, {
   withSpring,
 } from 'react-native-reanimated';
 import { ArrowLeft, Star, Heart, ThumbsUp, Sparkles } from 'lucide-react-native';
+import { useStripe } from '@stripe/stripe-react-native';
 import { useAuthQuery, useAuthMutation, useAuthAction } from '@/lib/useAuthQuery';
 
 import { Card, Avatar, Button, PawIcon } from '@/components/ui';
@@ -56,6 +57,9 @@ export default function ReviewScreen() {
   // Create review mutation (without tip) and payment action (with tip)
   const createReview = useAuthMutation(api.reviews.create);
   const createReviewWithTip = useAuthAction(api.payments.createReviewWithTip);
+  const cancelReviewTipPayment = useAuthAction(api.payments.cancelReviewTipPayment);
+
+  const { initPaymentSheet, presentPaymentSheet } = useStripe();
 
   // Calculate duration in minutes from actual walk times (must be before early returns)
   const durationMinutes = React.useMemo(() => {
@@ -112,25 +116,17 @@ export default function ReviewScreen() {
     if (!walk || rating === 0) return;
 
     setIsSubmitting(true);
-    try {
-      // Build comment from review text and tags
-      const tagLabels = selectedTags.map(id => quickTags.find(t => t.id === id)?.label).filter(Boolean);
-      const comment = [review.trim(), ...tagLabels].filter(Boolean).join(' • ') || undefined;
 
-      // Convert tip from dollars to cents
-      const tipAmountCents = tip && tip > 0 ? Math.round(tip * 100) : 0;
+    // Build comment from review text and tags
+    const tagLabels = selectedTags.map(id => quickTags.find(t => t.id === id)?.label).filter(Boolean);
+    const comment = [review.trim(), ...tagLabels].filter(Boolean).join(' • ') || undefined;
 
-      if (tipAmountCents > 0) {
-        // Use payment action to charge the tip
-        await createReviewWithTip({
-          walkId: walk._id,
-          rating,
-          comment,
-          tipAmount: tipAmountCents,
-        });
-        toast.show('Review submitted with tip!', 'success');
-      } else {
-        // No tip, use simple mutation
+    // Convert tip from dollars to cents
+    const tipAmountCents = tip && tip > 0 ? Math.round(tip * 100) : 0;
+
+    // No tip — single mutation, no PaymentSheet needed.
+    if (tipAmountCents === 0) {
+      try {
         await createReview({
           walkId: walk._id,
           rating: rating as 1 | 2 | 3 | 4 | 5,
@@ -138,43 +134,113 @@ export default function ReviewScreen() {
           tipAmount: undefined,
         });
         toast.show('Review submitted successfully!', 'success');
+        router.replace('/(owner)/walks');
+      } catch (error: unknown) {
+        showSubmitError(error);
+      } finally {
+        setIsSubmitting(false);
+      }
+      return;
+    }
+
+    // Tip path — create PI + pending review, then collect payment via PaymentSheet.
+    // On cancel/error we must roll back the pending review or the next submit
+    // attempt will hit "Review already exists".
+    let pendingReviewId: Id<'reviews'> | null = null;
+    try {
+      const result = await createReviewWithTip({
+        walkId: walk._id,
+        rating,
+        comment,
+        tipAmount: tipAmountCents,
+      });
+      pendingReviewId = result.reviewId;
+
+      if (!result.clientSecret) {
+        toast.show('Payment setup failed. Please try again.', 'error');
+        await cancelReviewTipPayment({ reviewId: pendingReviewId });
+        return;
       }
 
+      const { error: initError } = await initPaymentSheet({
+        paymentIntentClientSecret: result.clientSecret,
+        merchantDisplayName: 'Packwalk',
+        style: 'automatic',
+        applePay: { merchantCountryCode: 'CA' },
+        googlePay: { merchantCountryCode: 'CA', testEnv: __DEV__ },
+      });
+      if (initError) {
+        console.error('Tip PaymentSheet init error:', initError);
+        toast.show('Payment setup failed. Please try again.', 'error');
+        await cancelReviewTipPayment({ reviewId: pendingReviewId });
+        return;
+      }
+
+      const { error: paymentError } = await presentPaymentSheet();
+      if (paymentError) {
+        if (paymentError.code === 'Canceled') {
+          await cancelReviewTipPayment({ reviewId: pendingReviewId });
+          toast.show('Tip cancelled — no review submitted', 'info');
+          return;
+        }
+        console.error('Tip payment error:', paymentError);
+        await cancelReviewTipPayment({ reviewId: pendingReviewId });
+        toast.show('Payment failed. Please try again.', 'error');
+        return;
+      }
+
+      // Payment succeeded — the webhook will flip tipStatus to 'succeeded' and
+      // create the earnings row. The review is already inserted, so we can
+      // confidently navigate.
+      toast.show('Review submitted with tip!', 'success');
       router.replace('/(owner)/walks');
     } catch (error: unknown) {
-      // Parse Convex error codes for specific messages
-      let message = 'Failed to submit review. Please try again.';
-
-      if (error && typeof error === 'object' && 'data' in error) {
-        const convexError = error as { data?: { code?: string; message?: string } };
-        const code = convexError.data?.code;
-
-        switch (code) {
-          case 'payments/connect_required':
-            message = "This walker isn't set up to receive tips yet. Try submitting without a tip.";
-            break;
-          case 'state/invalid_transition':
-            message = 'This walk has already been reviewed.';
-            break;
-          case 'validation/error':
-            message = convexError.data?.message || 'Please check your input and try again.';
-            break;
-          case 'auth/not_authenticated':
-            message = 'Please log in and try again.';
-            break;
-          default:
-            // Check for Stripe-related errors in the message
-            const errMsg = convexError.data?.message?.toLowerCase() || '';
-            if (errMsg.includes('card') || errMsg.includes('declined') || errMsg.includes('payment')) {
-              message = 'Payment failed. Please try again.';
-            }
+      if (pendingReviewId) {
+        try {
+          await cancelReviewTipPayment({ reviewId: pendingReviewId });
+        } catch (cleanupErr) {
+          // Cleanup best-effort. The user will see the original error.
+          console.error('Failed to clean up pending tip review:', cleanupErr);
         }
       }
-
-      toast.show(message, 'error');
+      showSubmitError(error);
     } finally {
       setIsSubmitting(false);
     }
+  };
+
+  const showSubmitError = (error: unknown) => {
+    // Parse Convex error codes for specific messages
+    let message = 'Failed to submit review. Please try again.';
+
+    if (error && typeof error === 'object' && 'data' in error) {
+      const convexError = error as { data?: { code?: string; message?: string } };
+      const code = convexError.data?.code;
+
+      switch (code) {
+        case 'payments/connect_required':
+          message = "This walker isn't set up to receive tips yet. Try submitting without a tip.";
+          break;
+        case 'state/invalid_transition':
+          message = 'This walk has already been reviewed.';
+          break;
+        case 'validation/error':
+          message = convexError.data?.message || 'Please check your input and try again.';
+          break;
+        case 'auth/not_authenticated':
+          message = 'Please log in and try again.';
+          break;
+        default: {
+          // Check for Stripe-related errors in the message
+          const errMsg = convexError.data?.message?.toLowerCase() || '';
+          if (errMsg.includes('card') || errMsg.includes('declined') || errMsg.includes('payment')) {
+            message = 'Payment failed. Please try again.';
+          }
+        }
+      }
+    }
+
+    toast.show(message, 'error');
   };
 
   const tipOptions = [3, 5, 10];
