@@ -4,7 +4,7 @@ Dog walking app for Toronto that donates 20% to local shelters. Built with React
 
 > **Note:** `web_html/` is a standalone landing page (packwalk.ca) with its own git repo. It is not part of this app and is gitignored.
 
-**Status: TestFlight Beta** — Build 8 live on TestFlight as of 2026-05-15, installed and working on physical device. Stripe Connect working. Real OAuth authentication only.
+**Status: TestFlight Beta** — Build 9 submitted to TestFlight 2026-05-15. External Beta App Review approved (public link `testflight.apple.com/join/6ckQkxCK`). Full booking + GPS-tracked walk + tip flow validated end-to-end against live Stripe in this build (real $5 walk, real $3 tip, walker received $2.40 share, $0.60 shelter donation recorded). Stripe Connect working. Real OAuth authentication only.
 
 ---
 
@@ -124,7 +124,7 @@ Test with two devices using different OAuth accounts:
 1. ~~**Stripe** - Switch to production keys~~ ✅ Done
 2. ~~**Screenshots** - Capture App Store screenshots~~ ✅ Done (5 screens in `/screenshot`)
 3. ~~**Build** - Run `eas build --profile production --platform ios`~~ ✅ Done
-4. ~~**TestFlight** - Submit for external beta testing~~ ✅ Build 8 live on TestFlight (2026-05-15)
+4. ~~**TestFlight** - Submit for external beta testing~~ ✅ Build 9 live, external Beta App Review approved, public link `testflight.apple.com/join/6ckQkxCK` (2026-05-15)
 
 ### EAS Environment Variables (Production)
 ```
@@ -177,6 +177,16 @@ npx convex env remove LOCATION_TOKEN_SECRET_PREV
 ```
 
 `verifyWalkToken` accepts signatures under either key while `LOCATION_TOKEN_SECRET_PREV` is set; new signing always uses the current key.
+
+### Known follow-ups (non-blocking for current beta)
+
+Surfaced during live TestFlight testing 2026-05-15. None of these block external testers from using the app today, but each is queued for a future build.
+
+- **Apple Pay enrollment** — PaymentSheet shows the Apple Pay button but it's disabled with "not available". Stripe PMC has Apple Pay enabled; remaining checks: (a) device has a card in Wallet, (b) Apple Merchant ID `merchant.com.packwalk.app` is registered in Stripe's Apple Pay setup page (separate from the PMC). Card and Link work as workarounds.
+- **Stripe webhook failure alerts** — Stripe Dashboard → Personal settings → Communication preferences → enable "Failed webhook attempts". Without this we missed the Jan 28 Connect-endpoint disable for 9 days. Configure for both `empowering-euphoria` and `adventurous-sensation` endpoints.
+- **Cleanup cron for stuck `tipStatus: 'pending'` reviews** — 3 zombies from Dec/Jan in the reviews table from old builds that never invoked PaymentSheet. Filtered from public listings now (`listByWalker` excludes them), but should be torn down. Either subscribe to `payment_intent.canceled` events and route through `deleteAndRecalcStats`, or add a cron that finds `tipStatus: 'pending'` older than ~30 min and tears them down.
+- **Client-side improvement to Stripe Connect onboarding** — Replace `Linking.openURL(stripeUrl)` in `app/(walker)/earnings.tsx` with `WebBrowser.openAuthSessionAsync(stripeUrl, returnUrl)` so the in-app browser auto-dismisses on return-URL detection. Server-side auto-redirect bridge (HTML page in `convex/http.ts`) is the current workaround.
+- **Stale test-mode Stripe customer IDs** — if you switch Stripe modes (test ↔ live) and an existing owner has a stored `stripeCustomerId` from the prior mode, charges fail with "No such customer". Clear via `npx convex run paymentsMutations:clearStripeCustomerId '{"userId":"<id>"}'`. Affects only test accounts during dev mode swaps.
 
 ### Future Enhancements (Post-MVP)
 - Help & Support screen
@@ -510,4 +520,7 @@ eas build --profile production --platform ios
 - [x] Capture App Store screenshots (5 screens in `/screenshot`)
 - [x] Rebuild iOS with production config
 - [x] EAS environment variables configured for production
-- [x] Build 8 live on TestFlight, installed and verified on physical device
+- [x] Build 8 installed and verified on physical device (2026-05-15)
+- [x] External Beta App Review approved, public link: `testflight.apple.com/join/6ckQkxCK`
+- [x] Build 9 submitted to TestFlight with end-to-end tip flow + earnings display fixes (2026-05-15)
+- [x] Live-data validation: real $5 walk + $3 tip booked, walker received $4 + $2.40 share, $0.60 shelter donation tracked, GPS task uploaded via walk-scoped token, webhook dual-secret verifier handling both platform and Connect endpoints

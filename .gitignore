@@ -39,6 +39,9 @@ yarn-error.*
 transfer.md
 BLOCKER.md
 
+# stale CLAUDE.md snapshot recreated by external tools (e.g., codex)
+AGENTS.md
+
 # typescript
 *.tsbuildinfo
 
