@@ -711,6 +711,17 @@ export const createBookingWithPayment = action({
         errorMessage: errInfo.message,
         attempt: 1,
       });
+      // Tear down the orphan walk request before throwing. The client's
+      // try/catch cannot do this — it never receives requestId when the
+      // action throws — so we must clean up here or the walker sees a
+      // pending request that can never be accepted (no PaymentIntent).
+      try {
+        await ctx.runMutation(api.walkRequests.cancel, { requestId });
+      } catch (cleanupErr) {
+        // Best-effort cleanup; the original Stripe error is what the user
+        // needs to see.
+        console.error('Failed to cancel orphan walk request after PI create failure:', cleanupErr);
+      }
       packwalkError('stripe/error', errInfo.message || 'Payment setup failed');
     }
 
