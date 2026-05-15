@@ -386,6 +386,7 @@ export default function ActiveWalkScreen() {
   const completeWalk = useAuthMutation(api.walks.complete);
   const appendLocation = useAuthMutation(api.walks.appendLocation);
   const appendLocationsBatch = useAuthMutation(api.walks.appendLocationsBatch);
+  const getActiveWalkToken = useAuthMutation(api.walks.getActiveWalkToken);
 
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [isPaused, setIsPaused] = useState(false);
@@ -660,6 +661,28 @@ export default function ActiveWalkScreen() {
         const token = await authStorage.getToken();
         backgroundTaskContext.authToken = token || undefined;
         console.log('[GPS-SETUP] Auth token:', token ? 'present' : 'MISSING');
+
+        // Walk-scoped token is normally set by handleStartWalk after startWalk()
+        // returns. On app reload/crash recovery, that path didn't run and the
+        // module-level token is empty — request a fresh one from the server.
+        if (!backgroundTaskContext.walkToken) {
+          console.log('[GPS-SETUP] Walk token missing (likely recovery), refetching');
+          try {
+            const tokenResult = await getActiveWalkToken({ walkId: walkId as Id<'walks'> });
+            backgroundTaskContext.walkToken = tokenResult.locationToken;
+            console.log('[GPS-SETUP] Walk token refetched');
+          } catch (error: any) {
+            console.log('[GPS-SETUP] Failed to refetch walk token:', error?.message);
+            toast.show(
+              'Could not resume GPS tracking. The walk may have ended — try restarting.',
+              'error',
+            );
+            setLocationError('auth_expired');
+            setIsTrackingStopped(true);
+            backgroundTaskContext.isPermanentlyFailed = true;
+            return;
+          }
+        }
 
         // Stop any existing task before starting fresh
         await stopLocationUpdatesSafe();

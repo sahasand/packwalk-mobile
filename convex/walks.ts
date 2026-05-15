@@ -308,6 +308,36 @@ export const start = mutation({
   },
 });
 
+// Reissue a walk-scoped GPS upload token for the calling walker's in-progress
+// walk. Called from the active-walk screen on mount when the module-level
+// token is missing — typically after an app reload or crash recovery, where
+// the original token (issued by walks.start) was lost from memory.
+//
+// The token is deterministic via HMAC, so reissuing produces an equivalent
+// credential without any DB state. Endpoint accepts any unexpired token
+// signed for the (walkId, walkerId) pair.
+export const getActiveWalkToken = mutation({
+  args: { walkId: v.id('walks') },
+  handler: async (ctx, args) => {
+    const walker = await requireUser(ctx);
+    requireWalker(walker);
+
+    const walk = await ctx.db.get(args.walkId);
+    if (!walk || walk.walkerId !== walker._id) {
+      packwalkError('validation/error', 'Walk not found');
+    }
+    if (walk.status !== 'in_progress') {
+      packwalkError('state/invalid_transition', 'Walk is not in progress');
+    }
+
+    const locationToken = await signWalkToken({
+      walkId: walk._id,
+      walkerId: walker._id,
+    });
+    return { locationToken };
+  },
+});
+
 export const complete = mutation({
   args: {
     walkId: v.id('walks'),
