@@ -537,58 +537,72 @@ export const createReviewWithTip = action({
 // to 'succeeded' and create the earnings row.
 export const cancelReviewTipPayment = action({
   args: { reviewId: v.id('reviews') },
-  handler: async (ctx, args) => {
+  handler: async (
+    ctx,
+    args,
+  ): Promise<{ reviewId: Id<'reviews'>; cancelled: boolean; reason: string }> => {
     const owner = await ctx.runQuery(api.users.getCurrent, {});
     if (!owner) packwalkError('auth/not_authenticated', 'Not authenticated');
 
     const review = await ctx.runQuery(internal.reviews.getById, {
       reviewId: args.reviewId,
     });
-    if (!review) packwalkError('validation/error', 'Review not found');
+
+    // Idempotent: the failed-tip webhook may have already deleted the
+    // review before the client's cleanup got here. Treat that as a
+    // successful cancellation rather than an error so the UI can move on.
+    if (!review) {
+      return { reviewId: args.reviewId, cancelled: true, reason: 'already_cleaned' };
+    }
     if (review.ownerId !== owner._id) {
       packwalkError('auth/forbidden', 'Not allowed');
     }
-    // Only pending tips can be cancelled. Succeeded/failed tips are terminal
-    // and handled by webhooks; 'none' means there was never a payment.
-    if (review.tipStatus !== 'pending') {
-      return { reviewId: args.reviewId, cancelled: false, reason: 'not_pending' };
-    }
-    if (!review.tipPaymentIntentId) {
-      // Defensive: a pending tip without a PI id shouldn't happen, but if it
-      // does we can safely delete the orphan.
-      await ctx.runMutation(internal.reviews.deleteAndRecalcStats, {
-        reviewId: args.reviewId,
-      });
-      return { reviewId: args.reviewId, cancelled: true, reason: 'orphan' };
+
+    // Succeeded tips are terminal: money moved, walker has earnings, refuse
+    // to undo from this path (use a refund flow if needed).
+    if (review.tipStatus === 'succeeded') {
+      return { reviewId: args.reviewId, cancelled: false, reason: 'already_succeeded' };
     }
 
-    const stripe = getStripe();
-    try {
-      await stripe.paymentIntents.cancel(review.tipPaymentIntentId, undefined, {
-        idempotencyKey: `tip_cancel:${review._id}`,
-      });
-    } catch (err: unknown) {
-      const errInfo = getErrorInfo(err);
-      // payment_intent_unexpected_state means the PI moved past a cancellable
-      // state (succeeded, already cancelled, etc) between our state-check and
-      // this call. Trust the webhook to reconcile — don't delete the review.
-      if (errInfo.code === 'payment_intent_unexpected_state') {
-        return { reviewId: args.reviewId, cancelled: false, reason: 'pi_terminal' };
+    // 'none' means no payment was ever attached — this action doesn't apply.
+    if (review.tipStatus === 'none') {
+      return { reviewId: args.reviewId, cancelled: false, reason: 'no_tip_to_cancel' };
+    }
+
+    // Cancel the Stripe PaymentIntent for pending tips. Failed tips have
+    // already terminated on Stripe's side — skip the cancel call and go
+    // straight to deletion. Both states result in deleting the review so
+    // the owner can retry.
+    if (review.tipStatus === 'pending' && review.tipPaymentIntentId) {
+      const stripe = getStripe();
+      try {
+        await stripe.paymentIntents.cancel(review.tipPaymentIntentId, undefined, {
+          idempotencyKey: `tip_cancel:${review._id}`,
+        });
+      } catch (err: unknown) {
+        const errInfo = getErrorInfo(err);
+        // payment_intent_unexpected_state means the PI moved past a
+        // cancellable state between our state-check and this call — most
+        // likely the success or failure webhook is en-route. Trust the
+        // webhook to reconcile; don't delete the review here.
+        if (errInfo.code === 'payment_intent_unexpected_state') {
+          return { reviewId: args.reviewId, cancelled: false, reason: 'pi_terminal' };
+        }
+        await ctx.runMutation(internal.paymentsMutations.logStripeError, {
+          context: 'tip_payment_cancel',
+          idempotencyKey: `tip_cancel:${review._id}`,
+          errorCode: errInfo.code,
+          errorMessage: errInfo.message,
+          attempt: 1,
+        });
+        packwalkError('stripe/error', 'Failed to cancel tip payment');
       }
-      await ctx.runMutation(internal.paymentsMutations.logStripeError, {
-        context: 'tip_payment_cancel',
-        idempotencyKey: `tip_cancel:${review._id}`,
-        errorCode: errInfo.code,
-        errorMessage: errInfo.message,
-        attempt: 1,
-      });
-      packwalkError('stripe/error', 'Failed to cancel tip payment');
     }
 
     await ctx.runMutation(internal.reviews.deleteAndRecalcStats, {
       reviewId: args.reviewId,
     });
-    return { reviewId: args.reviewId, cancelled: true, reason: 'pi_cancelled' };
+    return { reviewId: args.reviewId, cancelled: true, reason: review.tipStatus };
   },
 });
 

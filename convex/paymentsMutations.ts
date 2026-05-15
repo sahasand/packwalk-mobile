@@ -385,6 +385,13 @@ export const processPaymentIntentSucceeded = internalMutation({
         tipPaymentIntentId: pi.id,
       });
 
+      // The review was inserted with tipStatus='pending', which
+      // updateWalkerStats deliberately filters out. Now that the tip
+      // succeeded, bump rating/count so the walker sees it.
+      await ctx.runMutation(internal.reviews.recalcStats, {
+        walkerId: review.walkerId,
+      });
+
       // Check if earnings already exist to prevent duplicate entries from webhook replay
       const existingEarning = await ctx.db
         .query('earnings')
@@ -440,7 +447,14 @@ export const processPaymentIntentFailed = internalMutation({
     const pi = args.paymentIntent as any;
     const tipReview = await findTipReview(ctx, pi);
     if (!tipReview) return;
-    await ctx.db.patch(tipReview._id, { tipStatus: 'failed' });
+    // A tip-review whose payment was declined has no business sticking
+    // around: no money moved, no audit trail is needed (the Stripe event
+    // is preserved in webhookEvents), and leaving it with tipStatus='failed'
+    // would block the owner from submitting a retry (createReviewWithTip
+    // errors on existing reviews). Delete and recalc the walker's stats.
+    await ctx.runMutation(internal.reviews.deleteAndRecalcStats, {
+      reviewId: tipReview._id,
+    });
   },
 });
 

@@ -21,6 +21,7 @@ import type * as lib_guards from "../lib/guards.js";
 import type * as lib_notDeleted from "../lib/notDeleted.js";
 import type * as lib_rateLimit from "../lib/rateLimit.js";
 import type * as lib_torontoNeighborhoods from "../lib/torontoNeighborhoods.js";
+import type * as lib_walkToken from "../lib/walkToken.js";
 import type * as me from "../me.js";
 import type * as messages from "../messages.js";
 import type * as notifications from "../notifications.js";
@@ -56,6 +57,7 @@ declare const fullApi: ApiFromModules<{
   "lib/notDeleted": typeof lib_notDeleted;
   "lib/rateLimit": typeof lib_rateLimit;
   "lib/torontoNeighborhoods": typeof lib_torontoNeighborhoods;
+  "lib/walkToken": typeof lib_walkToken;
   me: typeof me;
   messages: typeof messages;
   notifications: typeof notifications;

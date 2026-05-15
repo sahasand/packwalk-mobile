@@ -5,12 +5,20 @@ import { packwalkError } from './lib/errors';
 import type { Id } from './_generated/dataModel';
 import type { MutationCtx } from './_generated/server';
 
-// Helper to recalculate and update walker's avgRating and reviewCount
+// Helper to recalculate and update walker's avgRating and reviewCount.
+// Only finalized reviews count: tip-less (`'none'`) and successfully-tipped
+// (`'succeeded'`). Pending and failed tip-reviews represent in-flight or
+// abandoned payment attempts and shouldn't inflate ratings.
 async function updateWalkerStats(ctx: MutationCtx, walkerId: Id<'users'>) {
-  // Get all reviews for this walker
   const reviews = await ctx.db
     .query('reviews')
     .withIndex('by_walkerId', (q) => q.eq('walkerId', walkerId))
+    .filter((f) =>
+      f.or(
+        f.eq(f.field('tipStatus'), 'none'),
+        f.eq(f.field('tipStatus'), 'succeeded'),
+      ),
+    )
     .collect();
 
   const reviewCount = reviews.length;
@@ -108,6 +116,17 @@ export const deleteAndRecalcStats = internalMutation({
   },
 });
 
+// Internal-only: recompute walker stats. Called from the tip-payment
+// success webhook to bump rating/count once tipStatus flips from 'pending'
+// (which updateWalkerStats's filter excludes) to 'succeeded' (which it
+// includes). Without this, successfully-tipped reviews would never count.
+export const recalcStats = internalMutation({
+  args: { walkerId: v.id('users') },
+  handler: async (ctx, args) => {
+    await updateWalkerStats(ctx, args.walkerId);
+  },
+});
+
 export const getByWalkId = query({
   args: { walkId: v.id('walks') },
   handler: async (ctx, args) => {
@@ -129,10 +148,19 @@ export const listByWalker = query({
     limit: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
-    // Public query - anyone can view a walker's reviews
+    // Public query - anyone can view a walker's reviews. Surface only
+    // finalized reviews: 'none' (no tip attempted) and 'succeeded' (tip
+    // paid). 'pending' is mid-payment and may resolve either way;
+    // 'failed' is an abandoned attempt — neither should be visible.
     const reviews = await ctx.db
       .query('reviews')
       .withIndex('by_walkerId', (q) => q.eq('walkerId', args.walkerId))
+      .filter((f) =>
+        f.or(
+          f.eq(f.field('tipStatus'), 'none'),
+          f.eq(f.field('tipStatus'), 'succeeded'),
+        ),
+      )
       .order('desc')
       .take(args.limit ?? 10);
 
