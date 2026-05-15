@@ -127,13 +127,18 @@ export default function EarningsScreen() {
             : earningDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
         }
 
+        // Each earnings row represents one source (walk OR tip OR adjustment),
+        // not a combined transaction — so `amount` is the row's total and `tip`
+        // stays at 0. Tip-type rows are still labelled "Tip" via ownerName.
+        // Previously this set amount = tip = walker_share for tip rows, and the
+        // renderer summed them → walkers saw 2× the actual amount.
         return {
           id: earning._id,
           ownerName: earning.type === 'walk' ? 'Walk Earning' : earning.type === 'tip' ? 'Tip' : 'Adjustment',
           date: dateString,
           time: earningDate.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
           amount: Math.round(earning.amount / 100),
-          tip: earning.type === 'tip' ? Math.round(earning.amount / 100) : 0,
+          tip: 0,
           status: earning.status === 'paid_out' ? 'paid' : 'pending',
         };
       });
