@@ -1,4 +1,4 @@
-import { internalMutation, mutation, query } from './_generated/server';
+import { internalMutation, internalQuery, mutation, query } from './_generated/server';
 import { v } from 'convex/values';
 import { requireOwner, requireUser } from './lib/guards';
 import { packwalkError } from './lib/errors';
@@ -84,6 +84,27 @@ export const create = mutation({
     await updateWalkerStats(ctx, walk.walkerId);
 
     return reviewId;
+  },
+});
+
+// Internal-only: fetch a review by id. Used by tip-cancel action to read state
+// before tearing down the row.
+export const getById = internalQuery({
+  args: { reviewId: v.id('reviews') },
+  handler: async (ctx, args) => {
+    return await ctx.db.get(args.reviewId);
+  },
+});
+
+// Internal-only: delete a review and refresh the walker's avg rating / count
+// so the abandoned tip doesn't leave a permanent rating bump in stats.
+export const deleteAndRecalcStats = internalMutation({
+  args: { reviewId: v.id('reviews') },
+  handler: async (ctx, args) => {
+    const review = await ctx.db.get(args.reviewId);
+    if (!review) return;
+    await ctx.db.delete(args.reviewId);
+    await updateWalkerStats(ctx, review.walkerId);
   },
 });
 
