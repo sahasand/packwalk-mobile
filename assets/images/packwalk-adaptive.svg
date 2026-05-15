@@ -1,0 +1,19 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- Transparent background - paw only -->
+
+  <!-- Main paw pad (large center pad) -->
+  <ellipse cx="512" cy="580" rx="140" ry="120" fill="#C4754A"/>
+
+  <!-- Top toe pads - arranged in arc suggesting "pack" of 3 -->
+  <!-- Left toe -->
+  <ellipse cx="340" cy="380" rx="72" ry="85" fill="#C4754A"/>
+
+  <!-- Center toe (slightly higher, leading the pack) -->
+  <ellipse cx="512" cy="340" rx="76" ry="90" fill="#C4754A"/>
+
+  <!-- Right toe -->
+  <ellipse cx="684" cy="380" rx="72" ry="85" fill="#C4754A"/>
+
+  <!-- Small accent dot - subtle "+" suggesting more/community -->
+  <circle cx="512" cy="760" r="24" fill="#C4754A" opacity="0.4"/>
+</svg>

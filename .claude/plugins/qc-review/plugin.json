@@ -1,0 +1,8 @@
+{
+  "name": "qc-review",
+  "version": "1.0.0",
+  "description": "Packwalk-specific code review skills for Stripe, Convex, React Native, security, performance, and TypeScript",
+  "author": {
+    "name": "Packwalk Team"
+  }
+}
