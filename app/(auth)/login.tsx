@@ -234,19 +234,23 @@ export default function LoginScreen() {
     );
   }, []);
 
-  // Handle Google OAuth response
+  // Handle Google OAuth response.
+  // `success` keeps the spinner running — handleGoogleSuccess owns clearing it in its own finally.
+  // Every other response type (error, cancel, dismiss, locked, opened, or anything expo-auth-session
+  // adds in the future) must clear the spinner here, otherwise the button hangs forever.
   useEffect(() => {
     if (!response) return;
 
     if (response.type === 'success') {
       const idToken = response.params?.id_token || response.authentication?.idToken;
       handleGoogleSuccess(idToken);
-    } else if (response.type === 'error') {
-      toast.show('Google sign-in failed', 'error');
-      setGoogleLoading(false);
-    } else if (response.type === 'cancel' || response.type === 'dismiss') {
-      setGoogleLoading(false);
+      return;
     }
+
+    if (response.type === 'error') {
+      toast.show('Google sign-in failed', 'error');
+    }
+    setGoogleLoading(false);
   }, [response]);
 
   const handleGoogleSuccess = async (idToken: string | undefined) => {
