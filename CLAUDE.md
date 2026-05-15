@@ -160,7 +160,22 @@ RESEND_WEBHOOK_SECRET        # Svix webhook signing key for Resend (email events
 CERTN_WEBHOOK_SECRET         # HMAC signing key for Certn (background check, future)
 ```
 
-To rotate `LOCATION_TOKEN_SECRET`: generate a new value (`openssl rand -hex 32`), set it, then re-issue tokens via `walks.getActiveWalkToken` for any walks that are mid-flight. The old secret remains valid for existing tokens until they expire (12h after walk start).
+To rotate `LOCATION_TOKEN_SECRET`:
+
+```bash
+# 1. Stash the current secret as the previous key (grace window for in-flight tokens)
+OLD=$(npx convex env get LOCATION_TOKEN_SECRET)
+npx convex env set LOCATION_TOKEN_SECRET_PREV "$OLD"
+
+# 2. Generate and roll the new secret
+npx convex env set LOCATION_TOKEN_SECRET "$(openssl rand -hex 32)"
+
+# 3. Wait at least 12h (the token lifetime) so any in-flight walk tokens
+#    signed under the old key get a chance to age out, then remove the prev:
+npx convex env remove LOCATION_TOKEN_SECRET_PREV
+```
+
+`verifyWalkToken` accepts signatures under either key while `LOCATION_TOKEN_SECRET_PREV` is set; new signing always uses the current key.
 
 ### Future Enhancements (Post-MVP)
 - Help & Support screen
