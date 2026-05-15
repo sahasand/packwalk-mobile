@@ -579,9 +579,22 @@ export default function ActiveWalkScreen() {
         return;
       }
 
-      // Skip if we've already initialized for this walk
+      // Skip if we've already initialized for this walk in this component instance,
+      // OR the module-level background task is already tracking this walk (e.g.
+      // we re-mounted because the walker navigated back via the dashboard banner).
+      // Re-running setup would call stopLocationUpdatesSafe() and create a gap.
       if (initializedWalkIdRef.current === walkId) {
         console.log('[GPS-SETUP] Already initialized for this walk');
+        return;
+      }
+      if (
+        backgroundTaskContext.walkId === walkId &&
+        !backgroundTaskContext.isPermanentlyFailed
+      ) {
+        console.log('[GPS-SETUP] Background task already running for this walk, resuming without restart');
+        initializedWalkIdRef.current = walkId as string;
+        setIsTrackingStopped(false);
+        setLocationError(null);
         return;
       }
 
@@ -723,8 +736,18 @@ export default function ActiveWalkScreen() {
     setupBackgroundLocation();
 
     return () => {
-      // Cleanup on unmount
-      stopLocationUpdatesSafe();
+      // Only stop the background task if the walk is no longer in progress.
+      // If the walker just navigated away from this screen mid-walk (e.g. to
+      // Messages), we want the foreground service to keep capturing GPS — the
+      // dashboard banner will bring them back. Stopping here would create a
+      // location gap from unmount to remount.
+      //
+      // Status transitions (in_progress → completed/cancelled) re-run this
+      // effect, and the early-return branch above (line ~570) calls
+      // stopLocationUpdatesSafe() in that path.
+      if (walk?.status !== 'in_progress') {
+        stopLocationUpdatesSafe();
+      }
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [walkId, walk?.status, isPaused]);
