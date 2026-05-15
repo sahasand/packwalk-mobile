@@ -776,23 +776,38 @@ export const verifyAndParseStripeWebhook = internalAction({
     signature: v.string(),
   },
   handler: async (_ctx, args) => {
-    const secret = process.env.STRIPE_WEBHOOK_SECRET;
-    if (!secret || !args.signature) {
+    // Stripe Connect platforms need two webhook endpoints — one for the
+    // platform's own events (payment_intent.*, charge.*) and one for
+    // Connected-accounts events (account.updated when a walker's Connect
+    // status changes). Each endpoint has its own signing secret. We try
+    // both so a single deployment can verify events from either source.
+    //
+    // Required env: STRIPE_WEBHOOK_SECRET (platform endpoint)
+    // Optional:     STRIPE_WEBHOOK_SECRET_CONNECT (connected-accounts endpoint)
+    //               If only one endpoint exists, just set STRIPE_WEBHOOK_SECRET.
+    const candidates: string[] = [];
+    if (process.env.STRIPE_WEBHOOK_SECRET) candidates.push(process.env.STRIPE_WEBHOOK_SECRET);
+    if (process.env.STRIPE_WEBHOOK_SECRET_CONNECT) candidates.push(process.env.STRIPE_WEBHOOK_SECRET_CONNECT);
+
+    if (candidates.length === 0 || !args.signature) {
       return { valid: false, error: 'Missing signature or webhook secret' };
     }
 
-    try {
-      const stripe = getStripe();
-      const event = stripe.webhooks.constructEvent(args.payload, args.signature, secret);
-      return {
-        valid: true,
-        eventType: event.type,
-        eventId: event.id,
-        data: event.data.object as unknown as Record<string, unknown>,
-      };
-    } catch (err: unknown) {
-      const errInfo = getErrorInfo(err);
-      return { valid: false, error: errInfo.message };
+    const stripe = getStripe();
+    let lastError = 'No signing secret matched';
+    for (const secret of candidates) {
+      try {
+        const event = stripe.webhooks.constructEvent(args.payload, args.signature, secret);
+        return {
+          valid: true,
+          eventType: event.type,
+          eventId: event.id,
+          data: event.data.object as unknown as Record<string, unknown>,
+        };
+      } catch (err: unknown) {
+        lastError = getErrorInfo(err).message;
+      }
     }
+    return { valid: false, error: lastError };
   },
 });

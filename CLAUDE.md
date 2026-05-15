@@ -154,7 +154,8 @@ AUTH_APPLE_PRIVATE_KEY       # Contents of AuthKey_*.p8 (do not commit the .p8)
 AUTH_GOOGLE_CLIENT_ID        # Google OAuth web client id (audience)
 AUTH_GOOGLE_IOS_CLIENT_ID    # Google OAuth iOS client id (audience)
 STRIPE_SECRET_KEY            # sk_live_... for production, sk_test_... for dev
-STRIPE_WEBHOOK_SECRET        # whsec_... from Stripe webhook config
+STRIPE_WEBHOOK_SECRET        # whsec_... for the platform ("Your account") webhook endpoint
+STRIPE_WEBHOOK_SECRET_CONNECT # whsec_... for the Connect ("Connected accounts") endpoint; required if you have a second endpoint in Stripe
 LOCATION_TOKEN_SECRET        # 32+ char hex string for walk-scoped GPS tokens (HMAC key)
 RESEND_WEBHOOK_SECRET        # Svix webhook signing key for Resend (email events)
 CERTN_WEBHOOK_SECRET         # HMAC signing key for Certn (background check, future)
