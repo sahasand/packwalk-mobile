@@ -334,17 +334,32 @@ http.route({
   }),
 });
 
-// Stripe Connect return URL - redirects to app deep link
+// Stripe Connect return URL — bridge from Stripe's hosted onboarding back
+// into the Packwalk app. Stripe requires HTTPS for return_url, so we host
+// this page on convex.site and bounce to the packwalk:// custom scheme.
+//
+// Why this is a real page, not a plain redirect: iOS Safari frequently
+// no-ops custom-scheme <a href="packwalk://...">  links on first tap when
+// the user arrived from a different origin (the Stripe → convex.site →
+// packwalk:// hop). Walkers ended up stranded with a dead-looking button.
+//
+// Fix: redirect automatically using BOTH a <meta http-equiv="refresh"> (works
+// without JS, fires before render) AND a JS window.location.replace (covers
+// browsers that ignore the meta refresh). Keep the button as a visible
+// fallback for the rare case both methods get blocked, so the walker has
+// somewhere to tap.
 http.route({
   path: '/stripe/connect-return',
   method: 'GET',
   handler: httpAction(async () => {
+    const deepLink = 'packwalk://stripe-connect-return';
     const html = `
 <!DOCTYPE html>
 <html>
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="refresh" content="0; url=${deepLink}">
   <title>Setup Complete - Packwalk</title>
   <style>
     * { box-sizing: border-box; }
@@ -357,14 +372,22 @@ http.route({
     .btn:active { transform: scale(0.98); background: #c96a52; }
     .hint { margin-top: 16px; font-size: 13px; color: #999; }
   </style>
+  <script>
+    // Belt-and-suspenders to the meta refresh: try the deep link as soon as
+    // the page parses. A tiny delay (50ms) is more reliable in iOS Safari
+    // than a synchronous redirect during parse.
+    setTimeout(function () {
+      try { window.location.replace('${deepLink}'); } catch (e) {}
+    }, 50);
+  </script>
 </head>
 <body>
   <div class="container">
     <div class="icon">✅</div>
     <h1>Payout Setup Complete!</h1>
-    <p>Your Stripe account is ready to receive payments from dog walks.</p>
-    <a href="packwalk://stripe-connect-return" class="btn">Return to Packwalk</a>
-    <p class="hint">Tap the button above to go back to the app</p>
+    <p>Returning you to Packwalk…</p>
+    <a href="${deepLink}" class="btn">Open Packwalk</a>
+    <p class="hint">If nothing happened, tap the button above.</p>
   </div>
 </body>
 </html>`;
@@ -375,17 +398,20 @@ http.route({
   }),
 });
 
-// Stripe Connect refresh URL - redirects to app deep link
+// Stripe Connect refresh URL — same custom-scheme bounce as connect-return,
+// fires when Stripe's hosted onboarding session expires mid-flow.
 http.route({
   path: '/stripe/connect-refresh',
   method: 'GET',
   handler: httpAction(async () => {
+    const deepLink = 'packwalk://stripe-connect-refresh';
     const html = `
 <!DOCTYPE html>
 <html>
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="refresh" content="0; url=${deepLink}">
   <title>Session Expired - Packwalk</title>
   <style>
     * { box-sizing: border-box; }
@@ -398,14 +424,19 @@ http.route({
     .btn:active { transform: scale(0.98); background: #c96a52; }
     .hint { margin-top: 16px; font-size: 13px; color: #999; }
   </style>
+  <script>
+    setTimeout(function () {
+      try { window.location.replace('${deepLink}'); } catch (e) {}
+    }, 50);
+  </script>
 </head>
 <body>
   <div class="container">
     <div class="icon">⏰</div>
     <h1>Session Expired</h1>
-    <p>Your setup session timed out. Please return to the app and try again.</p>
-    <a href="packwalk://stripe-connect-refresh" class="btn">Return to Packwalk</a>
-    <p class="hint">Tap the button above to go back to the app</p>
+    <p>Returning you to Packwalk so you can try again…</p>
+    <a href="${deepLink}" class="btn">Open Packwalk</a>
+    <p class="hint">If nothing happened, tap the button above.</p>
   </div>
 </body>
 </html>`;
