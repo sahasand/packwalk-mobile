@@ -222,7 +222,8 @@ export default defineSchema({
     updatedAt: v.number(),
   })
     .index('by_walkerId_status', ['walkerId', 'status'])
-    .index('by_walkerId_type', ['walkerId', 'type']),
+    .index('by_walkerId_type', ['walkerId', 'type'])
+    .index('by_sourceId', ['sourceId']),
 
   reviews: defineTable({
     walkId: v.id('walks'),

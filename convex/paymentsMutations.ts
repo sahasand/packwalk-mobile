@@ -367,7 +367,7 @@ export const processPaymentIntentSucceeded = internalMutation({
       // Check if earnings already exist to prevent duplicate entries from webhook replay
       const existingEarning = await ctx.db
         .query('earnings')
-        .filter((f) => f.eq(f.field('sourceId'), reviewDocId))
+        .withIndex('by_sourceId', (q) => q.eq('sourceId', reviewDocId))
         .first();
 
       if (!existingEarning) {
