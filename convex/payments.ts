@@ -203,6 +203,16 @@ export const acceptWalkRequestWithCapture = action({
       packwalkError('auth/forbidden', 'Walker not approved');
     }
 
+    // Re-check Connect status at capture time — Stripe can disable an account between
+    // booking and accept (failed KYC follow-up, restricted region, etc). Capturing
+    // against a non-active destination would silently fail and the walker wouldn't be paid.
+    if (walker.stripeConnectStatus !== 'active') {
+      packwalkError(
+        'payments/connect_required',
+        'Walker payout account is not active. Re-complete payout setup before accepting walks.',
+      );
+    }
+
     const request = await ctx.runQuery(api.walkRequests.getById, {
       requestId: args.requestId,
     });
@@ -422,8 +432,15 @@ export const createReviewWithTip = action({
     const validRating = args.rating as 1 | 2 | 3 | 4 | 5;
 
     // 5. Tip amount validation
-    if (args.tipAmount <= 0) {
-      packwalkError('validation/error', 'Tip amount must be greater than zero');
+    // Upper bound prevents UI bugs or malicious clients from submitting absurd amounts.
+    // 50000 cents = $500 CAD, a generous ceiling for a single dog walk tip.
+    const MAX_TIP_CENTS = 50_000;
+    if (
+      !Number.isInteger(args.tipAmount) ||
+      args.tipAmount <= 0 ||
+      args.tipAmount > MAX_TIP_CENTS
+    ) {
+      packwalkError('validation/error', 'Tip amount must be a positive integer up to $500');
     }
 
     // 6. Check if review already exists
