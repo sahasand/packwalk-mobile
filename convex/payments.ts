@@ -606,6 +606,41 @@ export const cancelReviewTipPayment = action({
   },
 });
 
+// Re-fetch a Connect account from Stripe and feed it through processAccountUpdated.
+//
+// Why this exists: Stripe's newer v2.core.account[*].updated events (and
+// v2.core.account_link.returned) emit only an account_id plus a narrow diff
+// of what changed — not the full account object. Our processor needs the
+// full Account (requirements, capabilities, payouts_enabled, disabled_reason)
+// to decide a status. So we retrieve the account fresh, then hand it off
+// to the mutation that already knows how to interpret a v1-shaped Account.
+//
+// The TestFlight build that caused us to discover this gap had a real walker
+// stuck at `onboarding` because none of the v2.core.account[requirements].updated,
+// v2.core.account[identity].updated, etc. matched the old switch statement.
+export const refreshConnectAccount = internalAction({
+  args: { accountId: v.string() },
+  handler: async (ctx, args) => {
+    const stripe = getStripe();
+    try {
+      const account = await stripe.accounts.retrieve(args.accountId);
+      await ctx.runMutation(internal.paymentsMutations.processAccountUpdated, {
+        account,
+      });
+    } catch (err: unknown) {
+      const errInfo = getErrorInfo(err);
+      await ctx.runMutation(internal.paymentsMutations.logStripeError, {
+        context: 'refresh_connect_account',
+        idempotencyKey: `refresh:${args.accountId}`,
+        errorCode: errInfo.code,
+        errorMessage: errInfo.message,
+        attempt: 1,
+      });
+      throw err;
+    }
+  },
+});
+
 // Test function to verify Stripe API key works
 // SECURITY: Internal-only to prevent abuse
 export const testStripe = internalAction({

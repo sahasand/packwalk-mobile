@@ -167,6 +167,91 @@ export const setStripeCustomerId = internalMutation({
   },
 });
 
+// Internal-only — clears stripeCustomerId for a single user. Use when a
+// user's stored customer ID belongs to a different Stripe mode (test vs live)
+// than the current STRIPE_SECRET_KEY, which causes "No such customer" errors
+// on charge. ensureStripeCustomer will regenerate a fresh ID on next charge.
+//
+// Why scoped to one user, not all: tests change Stripe modes; production
+// generally doesn't. A mass wipe would be the wrong default — it'd churn
+// every user's payment-method storage on Stripe for one stale row.
+export const clearStripeCustomerId = internalMutation({
+  args: { userId: v.id('users') },
+  handler: async (ctx, args) => {
+    const user = await ctx.db.get(args.userId);
+    if (!user) return { cleared: false, reason: 'user_not_found' };
+    if (!user.stripeCustomerId) return { cleared: false, reason: 'no_customer_id' };
+    await ctx.db.patch(args.userId, {
+      stripeCustomerId: undefined,
+      updatedAt: Date.now(),
+    });
+    return { cleared: true, previousCustomerId: user.stripeCustomerId };
+  },
+});
+
+// Internal-only — fetch reviews and tip earnings for a walker, used during
+// end-to-end tip-flow validation.
+export const debugTipState = internalMutation({
+  args: { walkerId: v.id('users') },
+  handler: async (ctx, args) => {
+    const reviews = await ctx.db
+      .query('reviews')
+      .withIndex('by_walkerId', (q) => q.eq('walkerId', args.walkerId))
+      .order('desc')
+      .take(5);
+    const tipEarnings = await Promise.all(
+      reviews.map((r) =>
+        ctx.db
+          .query('earnings')
+          .withIndex('by_sourceId', (q) => q.eq('sourceId', r._id))
+          .first(),
+      ),
+    );
+    const profile = await ctx.db
+      .query('walkerProfiles')
+      .withIndex('by_userId', (q) => q.eq('userId', args.walkerId))
+      .first();
+    return {
+      walkerStats: profile
+        ? { avgRating: profile.avgRating, reviewCount: profile.reviewCount }
+        : null,
+      reviews: reviews.map((r, i) => ({
+        id: r._id,
+        rating: r.rating,
+        tipAmount: r.tipAmount,
+        tipStatus: r.tipStatus,
+        tipPaymentIntentId: r.tipPaymentIntentId,
+        createdAt: new Date(r.createdAt).toISOString(),
+        relatedEarning: tipEarnings[i]
+          ? {
+              id: tipEarnings[i]!._id,
+              amount: tipEarnings[i]!.amount,
+              type: tipEarnings[i]!.type,
+              status: tipEarnings[i]!.status,
+            }
+          : null,
+      })),
+    };
+  },
+});
+
+// Internal-only — list owners with their stripeCustomerId so we can identify
+// who owns a given Stripe customer ID (e.g., from an error message).
+export const debugListOwners = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    const users = await ctx.db.query('users').collect();
+    return users
+      .filter((u) => u.userType === 'owner')
+      .map((u) => ({
+        id: u._id,
+        name: u.name,
+        email: u.email,
+        stripeCustomerId: u.stripeCustomerId,
+      }));
+  },
+});
+
 export const setStripeConnectAccountId = internalMutation({
   args: {
     userId: v.id('users'),
@@ -253,6 +338,32 @@ export const handleStripeEvent = internalAction({
     }
 
     try {
+      // V2 Connect events (v2.core.account[requirements].updated,
+      // v2.core.account[identity].updated, v2.core.account_link.returned,
+      // etc.) emit just an account_id and a diff — not the full account.
+      // We can't decide a status from the diff alone, so on any v2 account
+      // event we fetch fresh state from Stripe via refreshConnectAccount.
+      // Use startsWith to cover the whole family without enumerating every
+      // bracketed variant Stripe may add.
+      if (
+        args.eventType.startsWith('v2.core.account') &&
+        args.eventType !== 'v2.core.account.updated'
+      ) {
+        const accountId =
+          (args.data?.account_id as string | undefined) ??
+          (args.data?.id as string | undefined);
+        if (accountId) {
+          await ctx.runAction(internal.payments.refreshConnectAccount, {
+            accountId,
+          });
+        }
+        await ctx.runMutation(internal.webhooks.markProcessed, {
+          provider: 'stripe',
+          eventId: args.eventId,
+        });
+        return;
+      }
+
       switch (args.eventType) {
         case 'account.updated':
         case 'v2.core.account.updated':
