@@ -134,6 +134,14 @@ EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID=425824234148-...
 EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID=425824234148-...
 ```
 
+### Convex deployment
+
+There is **one Convex backend**: `earnest-minnow-363.convex.cloud`. Despite the Convex CLI labeling it `dev:earnest-minnow-363` in `.env.local`, this is the only deployment that holds real data and env vars; both local development and TestFlight builds point at it.
+
+The Convex project also has a "production" deployment slot, but it is **unused** (no env vars set, no traffic). Do not deploy there without first migrating env vars from the dev deployment.
+
+To push backend code: `npx convex dev --once` (one-shot deploy to `earnest-minnow-363`) or run `npx convex dev` and leave it watching. Do **not** run `npx convex deploy` or `--prod` — that targets the unused prod deployment.
+
 ### Future Enhancements (Post-MVP)
 - Help & Support screen
 - Stripe Customer Portal for payment method management
