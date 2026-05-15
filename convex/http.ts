@@ -8,6 +8,18 @@ import type { Id } from './_generated/dataModel';
 
 const http = httpRouter();
 
+// Constant-time string equality. Using `===` for signature comparison short-circuits
+// on the first mismatched byte, leaking timing information about correct prefix length
+// to a network attacker (theoretical for HTTPS endpoints but trivial to avoid).
+function timingSafeEqual(a: string, b: string): boolean {
+  if (a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) {
+    diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  }
+  return diff === 0;
+}
+
 // Helper to verify HMAC-SHA256 signature (hex format)
 async function verifyHmacSignature(
   payload: string,
@@ -27,7 +39,7 @@ async function verifyHmacSignature(
     const expectedSignature = Array.from(new Uint8Array(signatureBytes))
       .map((b) => b.toString(16).padStart(2, '0'))
       .join('');
-    return signature.toLowerCase() === expectedSignature.toLowerCase();
+    return timingSafeEqual(signature.toLowerCase(), expectedSignature.toLowerCase());
   } catch {
     return false;
   }
@@ -73,7 +85,7 @@ async function verifySvixSignature(
     const byteArray = Array.from(new Uint8Array(signatureBytes));
     const expectedSignatureBase64 = btoa(String.fromCharCode(...byteArray));
 
-    return signatureBase64 === expectedSignatureBase64;
+    return timingSafeEqual(signatureBase64, expectedSignatureBase64);
   } catch {
     return false;
   }
