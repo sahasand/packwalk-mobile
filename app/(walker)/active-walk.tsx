@@ -51,6 +51,9 @@ const backgroundTaskContext: {
   walkId?: string;
   convexUrl?: string;
   authToken?: string;
+  // Walk-scoped HMAC token issued by walks.start and used as auth on the
+  // /location/batch endpoint. Decouples uploads from OAuth ID-token lifetime.
+  walkToken?: string;
   locationBuffer: Array<{
     lat: number;
     lng: number;
@@ -72,6 +75,7 @@ export function resetBackgroundTaskContext() {
   backgroundTaskContext.walkId = undefined;
   backgroundTaskContext.convexUrl = undefined;
   backgroundTaskContext.authToken = undefined;
+  backgroundTaskContext.walkToken = undefined;
   backgroundTaskContext.locationBuffer = [];
   backgroundTaskContext.failureCount = 0;
   backgroundTaskContext.lastErrorType = null;
@@ -164,15 +168,17 @@ const backgroundLocationTaskCallback = async ({ data, error }: any) => {
       backgroundTaskContext.convexUrl &&
       backgroundTaskContext.walkId
     ) {
-      // FIX #4: Refresh token before each batch (handles long walks + token expiry)
-      const freshToken = await authStorage.getToken();
-      if (!freshToken) {
-        console.log('[GPS-BG] ERROR: No auth token available');
+      // Use the walk-scoped token issued at walk-start. The token lives 12h
+      // and is bound to (walkId, walkerId), so it survives ID-token expiry
+      // on long walks. If somehow missing, treat as permanent failure for
+      // this walk — the walker needs to restart tracking.
+      const walkToken = backgroundTaskContext.walkToken;
+      if (!walkToken) {
+        console.log('[GPS-BG] ERROR: No walk token available');
         backgroundTaskContext.lastErrorType = 'auth_expired';
         backgroundTaskContext.isPermanentlyFailed = true;
         return;
       }
-      backgroundTaskContext.authToken = freshToken;
 
       try {
         const points = backgroundTaskContext.locationBuffer.slice(0, MAX_POINTS_PER_BATCH);
@@ -185,7 +191,7 @@ const backgroundLocationTaskCallback = async ({ data, error }: any) => {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            Authorization: `Bearer ${freshToken}`,
+            'X-Walk-Token': walkToken,
           },
           body: JSON.stringify({
             walkId: backgroundTaskContext.walkId,
@@ -826,7 +832,10 @@ export default function ActiveWalkScreen() {
         }
       }
 
-      await startWalk({ walkId: walkId as Id<'walks'> });
+      const startResult = await startWalk({ walkId: walkId as Id<'walks'> });
+      // Store the walk-scoped token so the background task can authenticate
+      // batch uploads without depending on the OAuth ID-token lifetime.
+      backgroundTaskContext.walkToken = startResult.locationToken;
       toast.show('Walk started!', 'success');
     } catch (error: any) {
       toast.show(error?.message || 'Failed to start walk', 'error');
