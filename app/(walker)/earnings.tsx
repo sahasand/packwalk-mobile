@@ -132,12 +132,16 @@ export default function EarningsScreen() {
         // stays at 0. Tip-type rows are still labelled "Tip" via ownerName.
         // Previously this set amount = tip = walker_share for tip rows, and the
         // renderer summed them → walkers saw 2× the actual amount.
+        //
+        // Keep amount as a float (dollars, not cents) and let the renderer
+        // format with toFixed(2). The old Math.round() was truncating $2.40
+        // tip earnings to "$2".
         return {
           id: earning._id,
           ownerName: earning.type === 'walk' ? 'Walk Earning' : earning.type === 'tip' ? 'Tip' : 'Adjustment',
           date: dateString,
           time: earningDate.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
-          amount: Math.round(earning.amount / 100),
+          amount: earning.amount / 100,
           tip: 0,
           status: earning.status === 'paid_out' ? 'paid' : 'pending',
         };
@@ -448,11 +452,11 @@ export default function EarningsScreen() {
                 </View>
                 <View style={styles.transactionAmounts}>
                   <Text style={styles.transactionAmount}>
-                    +${earning.amount + earning.tip}
+                    +${(earning.amount + earning.tip).toFixed(2)}
                   </Text>
                   {earning.tip > 0 && (
                     <Text style={styles.transactionTip}>
-                      incl. ${earning.tip} tip
+                      incl. ${earning.tip.toFixed(2)} tip
                     </Text>
                   )}
                   {earning.status === 'pending' && (
