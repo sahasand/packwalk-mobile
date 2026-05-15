@@ -346,18 +346,39 @@ export const processAccountUpdated = internalMutation({
   },
 });
 
+// Locate a tip review for an incoming PaymentIntent webhook.
+// Primary path: metadata.reviewId (set by payments.ts after review creation).
+// Fallback: lookup by tipPaymentIntentId, for the rare race where the webhook
+// arrives before the metadata backfill completes.
+async function findTipReview(
+  ctx: { db: { get: any; query: any } },
+  pi: any,
+): Promise<Doc<'reviews'> | null> {
+  const metadata = pi.metadata ?? {};
+  if (metadata.reviewId) {
+    const review = await ctx.db.get(metadata.reviewId as Id<'reviews'>);
+    if (review) return review;
+  }
+  if (metadata.kind === 'tip') {
+    return await ctx.db
+      .query('reviews')
+      .filter((f: any) => f.eq(f.field('tipPaymentIntentId'), pi.id))
+      .first();
+  }
+  return null;
+}
+
 export const processPaymentIntentSucceeded = internalMutation({
   args: { paymentIntent: v.any() },
   handler: async (ctx, args) => {
     const pi = args.paymentIntent as any;
     const metadata = pi.metadata ?? {};
-    const reviewId = metadata.reviewId as string | undefined;
     const requestId = metadata.requestId as string | undefined;
 
-    if (reviewId) {
-      const reviewDocId = reviewId as unknown as Id<'reviews'>;
-      const review = await ctx.db.get(reviewDocId);
-      if (!review) return;
+    const tipReview = await findTipReview(ctx, pi);
+    if (tipReview) {
+      const reviewDocId = tipReview._id;
+      const review = tipReview;
 
       await ctx.db.patch(reviewDocId, {
         tipStatus: 'succeeded',
@@ -417,13 +438,9 @@ export const processPaymentIntentFailed = internalMutation({
   args: { paymentIntent: v.any() },
   handler: async (ctx, args) => {
     const pi = args.paymentIntent as any;
-    const metadata = pi.metadata ?? {};
-    const reviewId = metadata.reviewId as string | undefined;
-    if (!reviewId) return;
-    const reviewDocId = reviewId as unknown as Id<'reviews'>;
-    const review = await ctx.db.get(reviewDocId);
-    if (!review) return;
-    await ctx.db.patch(reviewDocId, { tipStatus: 'failed' });
+    const tipReview = await findTipReview(ctx, pi);
+    if (!tipReview) return;
+    await ctx.db.patch(tipReview._id, { tipStatus: 'failed' });
   },
 });
 

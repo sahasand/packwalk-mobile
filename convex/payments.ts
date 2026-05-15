@@ -506,6 +506,19 @@ export const createReviewWithTip = action({
       },
     );
 
+    // Backfill reviewId onto the PaymentIntent metadata so the success/failure
+    // webhook handlers can locate the review. We can't include reviewId in the
+    // initial create() above because the review doesn't exist until after the
+    // PaymentIntent — Stripe needs the PI client_secret to confirm payment.
+    // The webhook also has a defensive fallback (lookup by tipPaymentIntentId)
+    // in case this update is racing the webhook delivery.
+    await stripe.paymentIntents.update(tipIntent.id, {
+      metadata: {
+        ...(tipIntent.metadata ?? {}),
+        reviewId,
+      },
+    });
+
     return { reviewId, clientSecret: tipIntent.client_secret };
   },
 });
