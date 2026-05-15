@@ -4,6 +4,7 @@ import { api } from './_generated/api';
 import { internal } from './_generated/api';
 import { stripeWebhook } from './stripeHttp';
 import { getErrorInfo } from './lib/errors';
+import { verifyWalkToken } from './lib/walkToken';
 import type { Id } from './_generated/dataModel';
 
 const http = httpRouter();
@@ -106,10 +107,21 @@ http.route({
   method: 'POST',
   handler: httpAction(async (ctx, request) => {
     try {
-      // Verify authenticated identity via Convex auth
-      const identity = await ctx.auth.getUserIdentity();
-      if (!identity) {
-        return new Response(JSON.stringify({ error: 'Unauthorized' }), {
+      // Auth via walk-scoped HMAC token, not the user's OAuth identity. The
+      // identity token expires after ~1h and cannot be refreshed client-side,
+      // which was killing GPS uploads on long walks. The walk token is signed
+      // at walk-start (walks.start mutation) and embeds (walkId, walkerId,
+      // expiresAt). See convex/lib/walkToken.ts.
+      const walkToken = request.headers.get('x-walk-token');
+      if (!walkToken) {
+        return new Response(JSON.stringify({ error: 'Missing X-Walk-Token header' }), {
+          status: 401,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      const tokenClaims = await verifyWalkToken(walkToken);
+      if (!tokenClaims) {
+        return new Response(JSON.stringify({ error: 'Invalid or expired walk token' }), {
           status: 401,
           headers: { 'Content-Type': 'application/json' },
         });
@@ -124,6 +136,15 @@ http.route({
           status: 400,
           headers: { 'Content-Type': 'application/json' },
         });
+      }
+
+      // The token is bound to a single walkId — reject requests that try to
+      // use it for a different walk.
+      if (walkId !== tokenClaims.walkId) {
+        return new Response(
+          JSON.stringify({ error: 'Token does not match walkId in payload' }),
+          { status: 403, headers: { 'Content-Type': 'application/json' } },
+        );
       }
 
       if (!points || !Array.isArray(points)) {
@@ -163,9 +184,11 @@ http.route({
         }
       }
 
-      // Call the batch location mutation (mutation verifies walk ownership)
-      await ctx.runMutation(api.walks.appendLocationsBatch, {
+      // Token-authenticated path. The internal mutation re-checks walk status
+      // and walker ownership against the DB as defense-in-depth.
+      await ctx.runMutation(internal.walks.appendLocationsBatchFromToken, {
         walkId: walkId as Id<'walks'>,
+        walkerId: tokenClaims.walkerId as Id<'users'>,
         points,
       });
 

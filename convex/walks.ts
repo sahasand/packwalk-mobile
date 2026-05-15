@@ -4,6 +4,7 @@ import { requireOwner, requireUser, requireWalker } from './lib/guards';
 import { packwalkError } from './lib/errors';
 import { rateLimit } from './lib/rateLimit';
 import { haversineDistanceKm } from './lib/geo';
+import { signWalkToken } from './lib/walkToken';
 import type { Doc } from './_generated/dataModel';
 import { internal } from './_generated/api';
 
@@ -295,7 +296,15 @@ export const start = mutation({
       options: { push: true, email: false },
     });
 
-    return walk._id;
+    // Walk-scoped token for the background /location/batch endpoint. Decouples
+    // GPS uploads from the walker's ID-token lifetime so long walks don't lose
+    // location data when the ~1h OAuth token expires.
+    const locationToken = await signWalkToken({
+      walkId: walk._id,
+      walkerId: walker._id,
+    });
+
+    return { walkId: walk._id, locationToken };
   },
 });
 
@@ -515,6 +524,9 @@ export const appendLocation = mutation({
   },
 });
 
+// Identity-auth wrapper for foreground callers. The HTTP /location/batch
+// endpoint authenticates via a walk-scoped HMAC token instead and calls
+// appendLocationsBatchInternal directly.
 export const appendLocationsBatch = mutation({
   args: {
     walkId: v.id('walks'),
@@ -523,79 +535,108 @@ export const appendLocationsBatch = mutation({
   handler: async (ctx, args) => {
     const walker = await requireUser(ctx);
     requireWalker(walker);
-
-    const walk = await ctx.db.get(args.walkId);
-    if (!walk || walk.walkerId !== walker._id) {
-      packwalkError('validation/error', 'Walk not found');
-    }
-    if (walk.status !== 'in_progress') {
-      packwalkError('state/invalid_transition', 'Walk not in progress');
-    }
-
-    // Defense-in-depth: HTTP endpoint enforces 50-point limit, but truncate here too
-    const points = args.points.slice(0, 50);
-    if (points.length === 0) return 0;
-
-    const last = await ctx.db
-      .query('walkLocations')
-      .withIndex('by_walkId_timestamp', (q) => q.eq('walkId', walk._id))
-      .order('desc')
-      .first();
-
-    let lastLocation: LastLocation | undefined =
-      walk.lastLocation ??
-      (last
-        ? {
-            lat: last.lat,
-            lng: last.lng,
-            timestamp: last.timestamp,
-            accuracy: last.accuracy ?? undefined,
-          }
-        : undefined);
-    let distanceMeters = walk.distanceMeters ?? 0;
-    const now = Date.now();
-
-    for (const point of points) {
-      validatePoint(point, lastLocation ?? undefined);
-
-      await ctx.db.insert('walkLocations', {
-        walkId: walk._id,
-        lat: point.lat,
-        lng: point.lng,
-        timestamp: point.timestamp,
-        accuracy: point.accuracy,
-        createdAt: now,
-      });
-
-      if (lastLocation) {
-        const deltaKm = haversineDistanceKm(
-          lastLocation.lat,
-          lastLocation.lng,
-          point.lat,
-          point.lng,
-        );
-        distanceMeters += Math.round(deltaKm * 1000);
-      }
-
-      lastLocation = {
-        lat: point.lat,
-        lng: point.lng,
-        timestamp: point.timestamp,
-        accuracy: point.accuracy,
-      };
-    }
-
-    if (lastLocation) {
-      await ctx.db.patch(walk._id, {
-        lastLocation,
-        distanceMeters,
-        updatedAt: now,
-      });
-    }
-
-    return points.length;
+    return await appendLocationsBatchImpl(ctx, {
+      walkId: args.walkId,
+      walkerId: walker._id,
+      points: args.points,
+    });
   },
 });
+
+// Token-authenticated batch insert. Caller (the HTTP endpoint) has already
+// verified the walk-scoped HMAC token and extracted walkerId from it. This
+// mutation re-checks walk ownership and status as defense-in-depth in case
+// the token was issued for a walk that has since been cancelled.
+export const appendLocationsBatchFromToken = internalMutation({
+  args: {
+    walkId: v.id('walks'),
+    walkerId: v.id('users'),
+    points: v.array(locationPointArgs),
+  },
+  handler: async (ctx, args) => {
+    return await appendLocationsBatchImpl(ctx, args);
+  },
+});
+
+async function appendLocationsBatchImpl(
+  ctx: { db: any },
+  args: {
+    walkId: Doc<'walks'>['_id'];
+    walkerId: Doc<'users'>['_id'];
+    points: Array<{ lat: number; lng: number; timestamp: number; accuracy?: number }>;
+  },
+) {
+  const walk = await ctx.db.get(args.walkId);
+  if (!walk || walk.walkerId !== args.walkerId) {
+    packwalkError('validation/error', 'Walk not found');
+  }
+  if (walk.status !== 'in_progress') {
+    packwalkError('state/invalid_transition', 'Walk not in progress');
+  }
+
+  // Defense-in-depth: HTTP endpoint enforces 50-point limit, but truncate here too
+  const points = args.points.slice(0, 50);
+  if (points.length === 0) return 0;
+
+  const last = await ctx.db
+    .query('walkLocations')
+    .withIndex('by_walkId_timestamp', (q: any) => q.eq('walkId', walk._id))
+    .order('desc')
+    .first();
+
+  let lastLocation: LastLocation | undefined =
+    walk.lastLocation ??
+    (last
+      ? {
+          lat: last.lat,
+          lng: last.lng,
+          timestamp: last.timestamp,
+          accuracy: last.accuracy ?? undefined,
+        }
+      : undefined);
+  let distanceMeters = walk.distanceMeters ?? 0;
+  const now = Date.now();
+
+  for (const point of points) {
+    validatePoint(point, lastLocation ?? undefined);
+
+    await ctx.db.insert('walkLocations', {
+      walkId: walk._id,
+      lat: point.lat,
+      lng: point.lng,
+      timestamp: point.timestamp,
+      accuracy: point.accuracy,
+      createdAt: now,
+    });
+
+    if (lastLocation) {
+      const deltaKm = haversineDistanceKm(
+        lastLocation.lat,
+        lastLocation.lng,
+        point.lat,
+        point.lng,
+      );
+      distanceMeters += Math.round(deltaKm * 1000);
+    }
+
+    lastLocation = {
+      lat: point.lat,
+      lng: point.lng,
+      timestamp: point.timestamp,
+      accuracy: point.accuracy,
+    };
+  }
+
+  if (lastLocation) {
+    await ctx.db.patch(walk._id, {
+      lastLocation,
+      distanceMeters,
+      updatedAt: now,
+    });
+  }
+
+  return points.length;
+}
 
 export const updateStripeChargeId = internalMutation({
   args: {
