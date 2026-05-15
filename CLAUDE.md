@@ -4,11 +4,11 @@ Dog walking app for Toronto that donates 20% to local shelters. Built with React
 
 > **Note:** `web_html/` is a standalone landing page (packwalk.ca) with its own git repo. It is not part of this app and is gitignored.
 
-**Status: TestFlight Beta** - Production build submitted to TestFlight, awaiting Apple review. Stripe Connect working. Real OAuth authentication only.
+**Status: TestFlight Beta** — Build 8 live on TestFlight as of 2026-05-15, installed and working on physical device. Stripe Connect working. Real OAuth authentication only.
 
 ---
 
-## Current State (2024-12-31)
+## Current State (2026-05-15)
 
 ### Complete
 - [x] Owner flow: Dog management, walker search, booking with PaymentSheet
@@ -124,7 +124,7 @@ Test with two devices using different OAuth accounts:
 1. ~~**Stripe** - Switch to production keys~~ ✅ Done
 2. ~~**Screenshots** - Capture App Store screenshots~~ ✅ Done (5 screens in `/screenshot`)
 3. ~~**Build** - Run `eas build --profile production --platform ios`~~ ✅ Done
-4. ~~**TestFlight** - Submit for external beta testing~~ ✅ Submitted, awaiting Apple review
+4. ~~**TestFlight** - Submit for external beta testing~~ ✅ Build 8 live on TestFlight (2026-05-15)
 
 ### EAS Environment Variables (Production)
 ```
@@ -509,4 +509,4 @@ eas build --profile production --platform ios
 - [x] Capture App Store screenshots (5 screens in `/screenshot`)
 - [x] Rebuild iOS with production config
 - [x] EAS environment variables configured for production
-- [x] TestFlight submitted for external beta review
+- [x] Build 8 live on TestFlight, installed and verified on physical device
